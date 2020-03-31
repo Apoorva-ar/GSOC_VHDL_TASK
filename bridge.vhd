@@ -81,7 +81,7 @@ ARCHITECTURE behavioral OF UART_SPI_Bridge IS
 
             rx       : IN STD_LOGIC;  --receive pin
             rx_busy  : OUT STD_LOGIC; --data reception in progress
-            new_data : OUT STD_LOGIC; --FLAG FOR I2C TO START TRANSACTION
+            new_data : OUT STD_LOGIC; 
 
             rx_error : OUT STD_LOGIC;                    --start, parity, or stop bit error detected
             rx_data  : OUT STD_LOGIC_VECTOR(7 DOWNTO 0); --data received
