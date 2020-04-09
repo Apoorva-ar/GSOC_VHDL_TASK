@@ -86,7 +86,7 @@ BEGIN
 						tx_state <= idle; --idle state
 					END IF;
 			END CASE;
-			tx <= tx_buffer(0); --transmit the LSB from the buffer
+			tx <= tx_data_buffer(0); --transmit the LSB from the buffer
 		END IF;
 	END PROCESS;
 	---------------------------- UART receiver state machine ---------------------------------------------------------------------
@@ -106,8 +106,8 @@ BEGIN
 		ELSIF (rising_edge(clk) AND rc_tick = '1') THEN
 			CASE rx_state IS
 				WHEN idle => --idle state
-					rx_busy <= '0';
-					new_data = '0';
+					rx_busy  <= '0';
+					new_data <= '0';
 
 					IF (rx = '0') THEN              --start bit 
 						IF (rc_count < rc_count/2) THEN --oversampling tick counter is not at start bit center
@@ -124,20 +124,20 @@ BEGIN
 						rx_state <= idle;
 					END IF;
 
-				WHEN receive =>                                                       --receive state
-					IF (rc_count < (rc_count/2) THEN                                      --not center of bit
+				WHEN receive =>                                                                       --receive state
+					IF (rc_count < (rc_count/2)) THEN                                             --not center of bit
 						rc_count := rc_count + 1;                                             --increment oversampling tick counter
 						rx_state <= receive;                                                  --remain in receive state
-					ELSIF (rx_data_count < parity + data_length) THEN                     --center of the bit but not all bits received
+					ELSIF (rx_data_count < parity + data_length) THEN                              --center of the bit but not all bits received
 						rc_count      := 0;                                                   --reset oversampling tick counter		
 						rx_data_count := rx_data_count + 1;                                   --increment receive data counter
 						rx_data_buffer <= rx_data_buffer(parity + data_length DOWNTO 1) & rx; --shift and add new bit to receive data buffer
 						rx_state       <= receive;                                            --remain in receive state
-					ELSE                                                                  --center of stop bit and all bits read
+					ELSE                                                                  	       --center of stop bit and all bits read
 						rx_data  <= rx_data_buffer(data_length DOWNTO 1);                     --output buffered received data
 						rx_error <= parity_error;
 						rx_busy  <= '0';
-						new_data = '1';   -- new data arrived														
+						new_data <= '1';  -- new data arrived														
 						rx_state <= idle; --return to idle state
 					END IF;
 
@@ -165,31 +165,23 @@ BEGIN
 				baud_tick <= '1';                                -- create impulse baud rate tick
 				rc_rate_cnt := 0;                                --reset oversampling period counter to avoid cumulative error
 			END IF;
-			-----------create oversampling rate ticks ---------------
-			IF (rc_rate_cnt < clk_freq/baud_rate/rc_rate - 1) THEN --oversampling period not reached
-				rc_rate_cnt := rc_rate_cnt + 1;                        --increment oversampling tick counter
-				rc_rate <= '0';                                        --no action	on oversampling tick generator	
-			ELSE                                                   --oversampling period reached
-				rc_rate_cnt := 0;                                      --reset oversampling tick counter
-				rc_rate <= '1';                                        --create impulse oversampling rate tick
-			END IF;
 		END IF;
 	END PROCESS;
 	---------------------------- UART receiver parity calculation-----------------------------------------------------------------
 	rx_parity(0) <= parity_type;
 	rx_parity_logic : FOR i IN 0 TO data_length - 1
-	GENERATE
-		rx_parity(i + 1) <= rx_parity(i) XOR rx_data_buffer(i + 1);
-	END GENERATE;
-	---------------------------- UART transmitter parity calculation-----------------------------------------------------------------
-	tx_parity(0) <= parity_type;
-	tx_parity_calculation : FOR i IN 0 TO data_length - 1
-	GENERATE
-		tx_parity(i + 1) <= tx_parity(i) XOR tx_data(i);
-	END GENERATE;
-	----------- check perity
-	WITH parity SELECT
-		parity_error <= rx_parity(data_length) XOR rx_data_buffer(parity + data_length) WHEN 1, --using parity
-		'0' WHEN OTHERS;                                                                        --not using parity
+		GENERATE
+			rx_parity(i + 1) <= rx_parity(i) XOR rx_data_buffer(i + 1);
+		END GENERATE;
+		---------------------------- UART transmitter parity calculation-----------------------------------------------------------------
+		tx_parity(0) <= parity_type;
+		tx_parity_calculation : FOR i IN 0 TO data_length - 1
+			GENERATE
+				tx_parity(i + 1) <= tx_parity(i) XOR tx_data(i);
+			END GENERATE;
+			----------- check perity
+			WITH parity SELECT
+				parity_error <= rx_parity(data_length) XOR rx_data_buffer(parity + data_length) WHEN 1, --using parity
+				'0' WHEN OTHERS;                                                                        --not using parity
 
-	END behavioral;
+		END behavioral;
