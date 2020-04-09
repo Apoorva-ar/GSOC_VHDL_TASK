@@ -13,10 +13,12 @@
 ----------------------------------------------------------------------------
 LIBRARY ieee;
 USE ieee.std_logic_1164.ALL;
+USE ieee.numeric_std.ALL;
+USE ieee.std_logic_signed.ALL;
 
 ENTITY UART_SPI_Bridge IS
     GENERIC (
-        DATA_SIZE : INTEGER := 16
+        DATA_SIZE : INTEGER := 8
     );
     PORT (
         clk_sys   : IN STD_LOGIC; --system clock
@@ -36,11 +38,11 @@ ARCHITECTURE behavioral OF UART_SPI_Bridge IS
     ----------------SPI Component -------------------------------------
     COMPONENT spi_master
         GENERIC (
-            DATA_SIZE : INTEGER := 16
+            DATA_SIZE : INTEGER := 8
         );
         PORT (
-            system_clock : IN std_logic; -- system clock
-            system_reset : IN std_logic; -- system reset
+            system_clock     : IN std_logic; -- system clock
+            system_reset_spi : IN std_logic; -- system reset
             ---- SPI Bus INterface
             SPI_CSN  : OUT std_logic_vector(3 DOWNTO 0);
             SPI_MOSI : OUT std_logic;
@@ -79,9 +81,9 @@ ARCHITECTURE behavioral OF UART_SPI_Bridge IS
             tx_data : IN STD_LOGIC_VECTOR(7 DOWNTO 0); --data to transmit
             tx_busy : OUT STD_LOGIC;
 
-            rx       : IN STD_LOGIC;  --receive pin
-            rx_busy  : OUT STD_LOGIC; --data reception in progress
-            new_data : OUT STD_LOGIC; 
+            rx       : IN STD_LOGIC;  -- receive pin
+            rx_busy  : OUT STD_LOGIC; -- data reception in progress
+            new_data : OUT STD_LOGIC; -- new data arrived
 
             rx_error : OUT STD_LOGIC;                    --start, parity, or stop bit error detected
             rx_data  : OUT STD_LOGIC_VECTOR(7 DOWNTO 0); --data received
@@ -91,10 +93,10 @@ ARCHITECTURE behavioral OF UART_SPI_Bridge IS
     TYPE state_machine IS(address, data, read_SPI_state, write_SPI_state);
     SIGNAL state                : state_machine; -- state machine
     SIGNAL SPI_data_chip_select : std_logic;
-    SIGNAL SPI_input_reg        : std_logic_vector(15 DOWNTO 0);
+    SIGNAL SPI_input_reg        : std_logic_vector(7 DOWNTO 0);
     SIGNAL SPI_data_valid       : std_logic;
     SIGNAL SPI_read_enable      : std_logic;
-    SIGNAL SPI_output_reg       : std_logic_vector(15 DOWNTO 0);
+    SIGNAL SPI_output_reg       : std_logic_vector(7 DOWNTO 0);
     SIGNAL SPI_tx_ready         : std_logic;
     SIGNAL SPI_rx_ready         : std_logic;
     SIGNAL SPI_tx_error         : std_logic;
@@ -116,7 +118,7 @@ ARCHITECTURE behavioral OF UART_SPI_Bridge IS
     SIGNAL UART_tx_busy         : std_logic;
     SIGNAL UART_rx_busy         : std_logic;
     SIGNAL COMMAND              : std_logic;
-    SIGNAL msg_len              : std_logic_vector(31 DOWNTO 0);
+    SIGNAL msg_len              : std_logic_vector(4 DOWNTO 0);
 BEGIN
 
     ----------------------------------PORT MAPPING -------------------------
@@ -124,8 +126,8 @@ BEGIN
     GENERIC MAP(
         DATA_SIZE => DATA_SIZE)
     PORT MAP(
-        system_clock => clk_sys,
-        system_reset => reset_sys,
+        system_clock     => clk_sys,
+        system_reset_spi => reset_sys,
         ---- SPI Bus INterface
         SPI_CSN  => SPI_CSN_port,
         SPI_MOSI => SPI_MOSI_port,
@@ -170,7 +172,7 @@ BEGIN
     -----------------------------------------------------------------------
     ---------------- Bridge FSM -------------------------------------------
     -----------------------------------------------------------------------
-    PROCESS (sys_clk, reset_sys)
+    PROCESS (clk_sys, reset_sys)
         VARIABLE cntr : INTEGER := 0;
     BEGIN
         IF (reset_sys = '1') THEN
@@ -179,56 +181,48 @@ BEGIN
             SPI_start            <= '0';
             SPI_data_chip_select <= '1';
             SPI_read_enable      <= '0';
-            SPI_write_enable     <= '0';
+            SPI_data_valid       <= '0';
             UART_tx_en           <= '0';
             UART_tx_data_Reg     <= (OTHERS => '0');
-            UART_rx_en           <= '0';
-            UART_rx_data_Reg     <= (OTHERS => '0');
             msg_len              <= (OTHERS => '0');
             cntr := 0;
         ELSE
-            IF (rising_edge(sys_clk)) THEN
-            BEGIN
+            IF (rising_edge(clk_sys)) THEN
                 CASE state IS
                     WHEN address =>
+                        SPI_start <= '0';                                  -- start SPI transaction
                         IF (UART_new_data = '1') THEN                      -- New data arrived from UART
                             SPI_slave_address <= UART_rx_data_reg(7 DOWNTO 6); -- store address
                             COMMAND           <= UART_rx_data_reg(5);          -- read/write SPI command
                             msg_len           <= UART_rx_data_reg(4 DOWNTO 0); -- number of bytes in message
                             state             <= data;                         -- change state to data state
-                            SPI_start         <= '1';                          -- start SPI transaction
                         END IF;
                         SPI_data_chip_select <= '1';
                     WHEN data =>
-                        SPI_start <= '0';       -- Disable start SPI transaction
+                        SPI_start <= '1';       --  start SPI transaction
                         IF (COMMAND = '0') THEN --READ transaction
-                            IF (UART_new_data = '1') THEN
-                                SPI_data_chip_select <= '0'; -- master chip select LOW
-                                SPI_read_enable      <= '1'; -- read_enable
-                                state                <= read_SPI_state;
-                            END IF;
+                            state <= read_SPI_state;
                         ELSE -- WRITE transaction
-                            IF (UART_new_data = '1') THEN
-                                SPI_data_chip_select <= '0'; -- master chip select LOW
-                                SPI_write_enable     <= '1'; -- read_enable
-                                state                <= write_SPI_state;
-                            END IF;
+                            state <= write_SPI_state;
                         END IF;
                     WHEN read_SPI_state =>
-                        IF UART_tx_busy = '0' THEN
-                            UART_tx_en       <= '1';           -- valid data flag HIGH
-                            UART_tx_data_Reg <= SPI_input_reg; -- Latch in data
-                            IF cntr = msg_len THEN             -- if last byte transaction
-                                state <= address;                  -- change state back to address state
+                        IF SPI_rx_ready = '1' AND UART_tx_busy = '0' THEN
+                            SPI_read_enable      <= '1';                 -- SPI read enable
+                            SPI_data_chip_select <= '0';                 -- master chip select LOW
+                            UART_tx_en           <= '1';                 -- valid data flag HIGH
+                            UART_tx_data_Reg     <= SPI_input_reg;       -- Latch in data into UART data buffer
+                            IF cntr = to_integer(unsigned(msg_len)) THEN -- if last byte transaction
+                                state <= address;                            -- change state back to address state
                                 cntr := 0;
                             ELSE
                                 cntr := cntr + 1;
                             END IF;
                         END IF;
                     WHEN write_SPI_state =>
-                        IF UART_rx_busy = '0' THEN
-                            UART_rx_en       <= '1';            -- valid data flag HIGH
-                            UART_rx_data_Reg <= SPI_output_reg; -- Latch in data
+                        IF UART_new_data = '1' AND SPI_tx_ready = '1' THEN
+                            SPI_output_reg       <= UART_rx_data_Reg; -- Latch out data from UART data buffer
+                            SPI_data_valid       <= '1';              -- set valid data pin HIGH
+                            SPI_data_chip_select <= '0';              -- master chip select LOW
                             IF cntr = msg_len THEN
                                 state <= address; -- change state back to address state
                                 cntr := 0;
