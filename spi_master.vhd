@@ -13,21 +13,22 @@ USE ieee.std_logic_unsigned.ALL;
 
 ENTITY spi_master IS
     GENERIC (
-    DATA_SIZE : INTEGER := 16
+        DATA_SIZE : INTEGER := 8
+    );
     PORT (
-        system_clock : IN std_logic; -- system clock
-        system_reset : IN std_logic; -- system reset
+        system_clock     : IN std_logic; -- system clock
+        system_reset_spi : IN std_logic; -- system reset
         ---- SPI Bus INterface
         SPI_CSN  : OUT std_logic_vector(3 DOWNTO 0);
         SPI_MOSI : OUT std_logic;
         SPI_MISO : IN std_logic;
         SPI_clk  : OUT std_logic;
         --- SPI Master User INterface
-        master_chip_select : IN std_logic;                     -- chip select for SPI master
-        input_data_reg     : IN std_logic_vector(15 DOWNTO 0); -- Input data
+        master_chip_select : IN std_logic;                                -- chip select for SPI master
+        input_data_reg     : IN std_logic_vector(DATA_SIZE - 1 DOWNTO 0); -- Input data
         data_write_en      : IN std_logic;
         data_read_en       : IN std_logic;
-        output_data_reg    : OUT std_logic_vector(15 DOWNTO 0); -- output data
+        output_data_reg    : OUT std_logic_vector(DATA_SIZE - 1 DOWNTO 0); -- output data
         --- Status Flags
         tx_ready         : OUT std_logic; -- Transmitter ready 
         rx_ready         : OUT std_logic; -- Receiver ready
@@ -69,7 +70,7 @@ ARCHITECTURE behavioral OF spi_master IS
         );
     END COMPONENT;
 
-    COMPONENT spinput_data_reg_path
+    COMPONENT spi_data_path
         GENERIC (
             DATA_SIZE : INTEGER);
         PORT (
@@ -108,7 +109,7 @@ BEGIN
         DATA_SIZE => DATA_SIZE)
     PORT MAP(
         sys_clk              => system_clock,
-        system_reset         => system_reset,
+        reset                => system_reset_spi,
         start_spi            => SPI_master_start,
         half_clk_count       => clock_period,
         setup_cycles         => setup_time_cycles,
@@ -124,7 +125,7 @@ BEGIN
         DATA_SIZE => DATA_SIZE)
     PORT MAP(
         clk_sys        => system_clock,
-        reset          => system_reset,
+        reset          => system_reset_spi,
         csn            => master_chip_select,
         data_input     => input_data_reg,
         wr             => data_write_en,
@@ -145,9 +146,9 @@ BEGIN
         SCLK           => sclk_signal
     );
 
-    PROCESS (system_clock, system_reset)
+    PROCESS (system_clock, system_reset_spi)
     BEGIN
-        IF system_reset = '1' THEN
+        IF system_reset_spi = '1' THEN
             SPI_CSN <= (OTHERS => '1');
         ELSIF rising_edge(system_clock) THEN
             CASE (SPI_slave_select) IS
